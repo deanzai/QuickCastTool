@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace = 'com.quickcast.companion'
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.quickcast.companion"
+        targetSdk = 37
+        minSdk = 30
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+
+    buildFeatures {
+        viewBinding = true
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.debug
+            minifyEnabled = false
+            shrinkResources = false
+            proguardFiles {
+                getDefaultProguardFile('proguard-android-optimize.txt')
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.8.0'
+    implementation 'com.google.android.material:material:1.14.0'
+    implementation 'androidx.core:core-ktx:1.19.1'
+
+    implementation "com.github.topjohnwu.libsu:core:5.2.0"
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+    implementation "com.google.zxing:core:3.5.3"
+}

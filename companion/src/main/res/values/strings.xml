@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">扫码投屏伴侣</string>
+    <string name="tile_name">扫码投屏</string>
+    <string name="scan_hint">对准电脑屏幕上的 QuickCast 二维码</string>
+    <string name="connecting">正在开启无线调试并连接电脑...</string>
+    <string name="connect_success">投屏已成功触发！</string>
+    <string name="connect_fail">连接失败，请检查是否在同一局域网或已授权Root</string>
+    <string name="need_camera">需要相机权限以扫描二维码</string>
+
+    <!-- Wi-Fi 状态检测与弹窗提示 -->
+    <string name="wifi_disabled_title">Wi-Fi 未开启</string>
+    <string name="wifi_disabled_message">无线投屏需要手机与电脑连接同一 Wi-Fi 网络。\n检测到设备的 Wi-Fi 尚未开启，请先开启并连接 Wi-Fi。</string>
+    <string name="wifi_not_connected_title">未连接 Wi-Fi</string>
+    <string name="wifi_not_connected_message">无线投屏需要手机与电脑处于同一局域网。\n当前尚未连接 Wi-Fi，请先连接到电脑所在的 Wi-Fi 网络。</string>
+    <string name="action_open_wifi">去连接 Wi-Fi</string>
+    <string name="action_cancel">取消</string>
+</resources>

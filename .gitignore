@@ -33,3 +33,14 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# QuickCast runtime / temporary artifacts
+windows_dump.txt
+build-apks/*.apk

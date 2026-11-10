@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black">
+
+    <com.journeyapps.barcodescanner.CompoundBarcodeView
+        android:id="@+id/barcode_scanner"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 顶部控制栏 -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="36dp"
+        android:paddingBottom="16dp"
+        android:background="#80000000">
+
+        <TextView
+            android:id="@+id/tv_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerVertical="true"
+            android:text="@string/tile_name"
+            android:textColor="@color/white"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/btn_torch"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_alignParentEnd="true"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_camera"
+            app:tint="@color/white" />
+    </RelativeLayout>
+
+    <!-- 底部状态指示与日志输出区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="#E618181F"
+        android:padding="16dp"
+        android:gravity="center_horizontal">
+
+        <ProgressBar
+            android:id="@+id/progress_bar"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginBottom="8dp"
+            android:visibility="gone"
+            android:indeterminateTint="@color/scan_reticle" />
+
+        <TextView
+            android:id="@+id/tv_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/scan_hint"
+            android:textColor="@color/white"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:gravity="center" />
+
+        <!-- 详细过程日志滚动区 -->
+        <ScrollView
+            android:id="@+id/scroll_log"
+            android:layout_width="match_parent"
+            android:layout_height="140dp"
+            android:layout_marginTop="8dp"
+            android:background="#60000000"
+            android:padding="8dp">
+
+            <TextView
+                android:id="@+id/tv_detail_log"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#A4B0BE"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:gravity="start"
+                android:text="就绪：请将取景框对准电脑屏幕二维码" />
+        </ScrollView>
+
+        <LinearLayout
+            android:id="@+id/layout_retry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="10dp"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/btn_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="38dp"
+                android:text="重新扫描"
+                android:textSize="13sp"
+                android:backgroundTint="@color/primary" />
+        </LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>
