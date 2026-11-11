@@ -2,6 +2,32 @@ plugins {
     id 'com.android.application'
 }
 
+def versionPropsFile = file('version.properties')
+def versionProps = new Properties()
+if (versionPropsFile.exists()) {
+    versionPropsFile.withInputStream { stream ->
+        versionProps.load(stream)
+    }
+}
+
+def currentVersionCode = (versionProps['VERSION_CODE'] ?: '1').toInteger()
+def currentVersionName = (versionProps['VERSION_NAME'] ?: '1.0.0').toString()
+
+// 执行 assembleRelease 编译发布包时自动递增版本号（可用 -PskipBump 跳过）
+def isReleaseBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains('assemblerelease') }
+if (isReleaseBuild && !project.hasProperty('skipBump')) {
+    currentVersionCode += 1
+    def parts = currentVersionName.tokenize('.')
+    if (parts.size() >= 3) {
+        parts[2] = ((parts[2] as Integer) + 1).toString()
+        currentVersionName = parts.join('.')
+    } else {
+        currentVersionName = "${currentVersionName}.1"
+    }
+    versionPropsFile.text = "VERSION_CODE=${currentVersionCode}\nVERSION_NAME=${currentVersionName}\n"
+    println("[Companion] Auto-bumped version to v${currentVersionName} (${currentVersionCode})")
+}
+
 android {
     namespace = 'com.quickcast.companion'
     compileSdk = 37
@@ -10,12 +36,13 @@ android {
         applicationId = "com.quickcast.companion"
         targetSdk = 37
         minSdk = 30
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = currentVersionCode
+        versionName = currentVersionName
     }
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 
     buildTypes {
@@ -32,6 +59,24 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
+    }
+}
+
+tasks.matching { it.name == 'assembleRelease' }.configureEach {
+    def verName = currentVersionName
+    def rootDirPath = rootProject.projectDir
+    def releaseApkProvider = layout.buildDirectory.file('outputs/apk/release/companion-release.apk')
+    doLast {
+        def releaseApk = releaseApkProvider.get().asFile
+        if (releaseApk.exists()) {
+            def destFile = new File(rootDirPath, "扫码投屏伴侣-QuickCast-v${verName}-release.apk")
+            releaseApk.withInputStream { input ->
+                destFile.withOutputStream { output ->
+                    output << input
+                }
+            }
+            println("[Companion] Exported APK: ${destFile.absolutePath}")
+        }
     }
 }
 

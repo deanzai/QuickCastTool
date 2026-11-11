@@ -77,7 +77,9 @@ QuickCastTool/
 ./gradlew :companion:assembleRelease
 ```
 
-编译产物位于 `companion/build/outputs/apk/release/` 下，传输至手机安装后：
+> 每次执行 `:companion:assembleRelease` 时会自动递增 [`companion/version.properties`](./companion/version.properties) 中的 `VERSION_CODE` 与 `VERSION_NAME`（可用 `-PskipBump` 跳过），并在项目根目录自动导出带版本号的 `扫码投屏伴侣-QuickCast-v<版本>-release.apk`（同时可在手机端界面顶部及日志首行直观查看当前版本号）。
+
+编译产物也可在 `companion/build/outputs/apk/release/` 中获取，传输至手机安装后：
 1. 打开应用并授予**相机权限**。
 2. 在手机下拉控制中心 -> 编辑快捷开关 -> 将 **【扫码投屏】** 磁贴拖到常用位置。
 3. 首次扫码时，在弹出的 Root 授权框中勾选**永久允许**即可。

@@ -65,6 +65,7 @@ class ScanActivity : AppCompatActivity() {
         binding = ActivityScanBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        binding.tvTitle.text = "${getString(R.string.tile_name)} v${BuildConfig.VERSION_NAME}"
         barcodeView = binding.barcodeScanner
 
         // 配置手电筒
@@ -93,7 +94,7 @@ class ScanActivity : AppCompatActivity() {
             true
         }
 
-        appendLog("应用启动成功，检查相机权限...")
+        appendLog("应用启动成功 (v${BuildConfig.VERSION_NAME} / #${BuildConfig.VERSION_CODE})，检查相机权限...")
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             == PackageManager.PERMISSION_GRANTED
         ) {
