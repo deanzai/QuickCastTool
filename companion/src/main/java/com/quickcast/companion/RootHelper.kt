@@ -8,33 +8,65 @@ import java.io.BufferedReader
 import java.io.DataOutputStream
 import java.io.InputStreamReader
 import java.net.Inet4Address
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.Socket
 
 object RootHelper {
     private const val TAG = "QuickCast_Root"
+    private const val ADB_PORT = 5555
 
     /**
-     * 开启手机的 5555 无线调试端口
+     * 通过本地回环探测 5555 端口是否已经处于监听状态
+     */
+    fun isLocalAdbPortOpen(timeoutMs: Int = 250): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", ADB_PORT), timeoutMs)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 开启手机的 5555 无线调试端口并等待端口真正就绪
      * 返回 (是否成功, 详细日志说明)
      */
     fun enableWirelessAdb(): Pair<Boolean, String> {
-        var process: Process? = null
-        var os: DataOutputStream? = null
+        // 1. 如果 5555 端口已经在监听，直接复用，避免无意义重启 adbd
+        if (isLocalAdbPortOpen()) {
+            Log.d(TAG, "5555 端口已在监听，跳过重启 adbd")
+            return Pair(true, "5555 端口已就绪")
+        }
 
-        // 兼容常见 Root 环境（Magisk / KernelSU / APatch / 原生）的 su 路径
-        val suCandidates = listOf("su", "/system/bin/su", "/system/xbin/su", "/sbin/su", "/data/adb/ksu/bin/su", "/data/adb/ap/bin/su")
+        // 2. 兼容常见 Root 环境（Magisk / KernelSU / APatch / 原生）的 su 路径
+        val suCandidates = listOf(
+            "su",
+            "/system/bin/su",
+            "/system/xbin/su",
+            "/sbin/su",
+            "/data/adb/ksu/bin/su",
+            "/data/adb/ap/bin/su"
+        )
 
+        var lastError = ""
         for (suCmd in suCandidates) {
+            var process: Process? = null
+            var os: DataOutputStream? = null
             try {
                 Log.d(TAG, "尝试通过 $suCmd 申请 Root 权限...")
                 process = Runtime.getRuntime().exec(suCmd)
                 os = DataOutputStream(process.outputStream)
 
-                // 执行无线调试激活指令
-                os.writeBytes("setprop service.adb.tcp.port 5555\n")
+                // 先关闭可能占用并切换 adbd 端口的原生无线调试，再固定设置 5555 并重启 adbd
+                os.writeBytes("settings put global adb_enabled 1\n")
+                os.writeBytes("settings put global adb_wifi_enabled 0\n")
+                os.writeBytes("setprop persist.adb.tcp.port $ADB_PORT\n")
+                os.writeBytes("setprop service.adb.tcp.port $ADB_PORT\n")
                 os.writeBytes("stop adbd\n")
                 os.writeBytes("start adbd\n")
-                os.writeBytes("settings put global adb_wifi_enabled 1\n")
                 os.writeBytes("exit\n")
                 os.flush()
 
@@ -43,24 +75,33 @@ object RootHelper {
                 val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText().trim()
 
                 if (exitCode == 0) {
-                    Log.d(TAG, "su 执行成功: $stdout")
-                    return Pair(true, "Root 授权成功，5555 端口已开启")
+                    Log.d(TAG, "su ($suCmd) 执行成功: $stdout，等待 5555 端口就绪...")
+                    // 轮询等待 adbd 拉起并绑定 5555 端口（最多等待 2.4 秒）
+                    repeat(16) {
+                        if (isLocalAdbPortOpen(200)) {
+                            return Pair(true, "Root 授权成功，5555 端口已就绪")
+                        }
+                        try {
+                            Thread.sleep(150)
+                        } catch (_: InterruptedException) {}
+                    }
+                    return Pair(false, "已执行 Root 指令，但 5555 端口未监听（请检查系统开发者选项总开关是否关闭）")
                 } else {
-                    val errMsg = if (stderr.isNotEmpty()) stderr else "退出码 $exitCode"
-                    Log.e(TAG, "su 执行返回错误: $errMsg")
-                    return Pair(false, "Root 执行失败: $errMsg")
+                    lastError = if (stderr.isNotEmpty()) stderr else "退出码 $exitCode"
+                    Log.e(TAG, "$suCmd 执行返回错误: $lastError")
+                    // su 存在但明确拒绝或执行失败时直接返回提示
+                    return Pair(false, "Root 执行失败: $lastError")
                 }
             } catch (e: Exception) {
-                // 如果是找不到 su 可执行文件，尝试下一个候选路径
-                Log.w(TAG, "$suCmd 无法执行: ${e.message}")
+                lastError = e.message ?: e.javaClass.simpleName
+                Log.w(TAG, "$suCmd 无法执行: $lastError")
             } finally {
                 try { os?.close() } catch (_: Exception) {}
                 try { process?.destroy() } catch (_: Exception) {}
             }
         }
 
-        // 如果全部候选路径均未找到
-        return Pair(false, "未检测到 su 二进制文件（请确认 Magisk/KernelSU/APatch 已对本应用授权）")
+        return Pair(false, "未获得 Root 权限（$lastError）")
     }
 
     /**

@@ -8,6 +8,7 @@ Windows 托盘 + 二维码悬浮窗 + 局域网握手服务 + scrcpy 自动化�
 import sys
 import os
 import re
+import time
 import shutil
 import socket
 import subprocess
@@ -31,16 +32,83 @@ from PySide6.QtWidgets import (
 SERVER_PORT = 15555
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_cast.log")
 
-# 配置全局日志
+# 配置全局日志（pythonw 无控制台时 sys.stdout 为 None，仅保留文件日志）
+_log_handlers = [logging.FileHandler(LOG_FILE, encoding="utf-8")]
+if sys.stdout is not None:
+    _log_handlers.append(logging.StreamHandler(sys.stdout))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=_log_handlers
 )
 logger = logging.getLogger("QuickCast")
+
+
+def _decode_bytes(data):
+    """安全解码子进程字节输出，兼容 UTF-8 与中文 Windows GBK，绝不抛出解码或 NoneType 异常"""
+    if not data:
+        return ""
+    if isinstance(data, str):
+        return data
+    for enc in ("utf-8", "gbk"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _is_adb_server_running():
+    """检查本地 ADB 守护进程 (5037 端口) 是否已在监听"""
+    try:
+        with socket.create_connection(("127.0.0.1", 5037), timeout=0.4):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_adb_server():
+    """确保 adb server 在脱离任何管道句柄的独立后台启动，防止子进程继承 stdout/stderr 导致死锁"""
+    if _is_adb_server_running():
+        return
+    try:
+        flags = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        subprocess.run(
+            ["adb", "start-server"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=6,
+            creationflags=flags
+        )
+    except Exception as e:
+        logger.warning(f"独立启动 ADB server 提示: {e}")
+
+
+def run_adb_command(args, timeout=8):
+    """安全执行 adb 命令，避免管道句柄继承死锁和字符编码导致的 NoneType + str 异常"""
+    ensure_adb_server()
+    proc = subprocess.Popen(
+        ["adb"] + args,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=subprocess.CREATE_NO_WINDOW
+    )
+    try:
+        raw_out, raw_err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+        raise
+    out_str = _decode_bytes(raw_out).strip()
+    err_str = _decode_bytes(raw_err).strip()
+    combined = "\n".join(part for part in (out_str, err_str) if part)
+    return proc.returncode, combined
 
 
 def get_all_lan_ips():
@@ -118,8 +186,8 @@ def create_tray_icon_image():
 
 class HttpBridge(QObject):
     """跨线程传递 HTTP 手机连接信号与状态更新"""
-    connect_signal = Signal(str)
-    log_signal = Signal(str, str)  # text, color
+    connect_signal = Signal(str, str)  # phone_ip, adb_note
+    log_signal = Signal(str, str)      # text, color
 
 
 class QuickCastRequestHandler(BaseHTTPRequestHandler):
@@ -141,14 +209,21 @@ class QuickCastRequestHandler(BaseHTTPRequestHandler):
 
         if parsed.path.rstrip("/") == "/connect":
             params = parse_qs(parsed.query)
-            phone_ip = params.get("ip", [client_ip])[0]
-            if not phone_ip:
-                phone_ip = client_ip
+            phone_ip = params.get("ip", [client_ip])[0] or client_ip
+            adb_ok = params.get("adb_ok", [""])[0]
+            adb_msg = params.get("adb_msg", [""])[0]
+
+            adb_note = ""
+            if adb_ok == "0":
+                adb_note = adb_msg or "手机端 Root 开启 5555 端口失败"
+                logger.warning(f"手机端上报 Root/调试状态异常: {adb_note}")
+            elif adb_ok == "1":
+                logger.info(f"手机端已确认 5555 端口就绪: {adb_msg}")
 
             logger.info(f"识别到待投屏手机 IP: {phone_ip}")
             if self.bridge:
                 self.bridge.log_signal.emit(f"收到握手: {phone_ip}", "#ffa502")
-                self.bridge.connect_signal.emit(phone_ip)
+                self.bridge.connect_signal.emit(phone_ip, adb_note)
 
             # 返回给手机端响应页面
             html = f"""<!DOCTYPE html>
@@ -503,6 +578,8 @@ class QuickCastApp:
 
         self.tray.show()
         self.qr_window.show_at_bottom_right()
+        # 后台独立预热 ADB Server，避免首次扫码时才触发 fork-server
+        threading.Thread(target=ensure_adb_server, daemon=True).start()
         self.tray.showMessage(
             "QuickCast 准备就绪",
             f"已开启局域网监听 (端口 {SERVER_PORT})，右键可查看日志",
@@ -572,52 +649,69 @@ class QuickCastApp:
     def restart_adb(self):
         def _task():
             logger.info("执行 adb kill-server...")
-            subprocess.run(["adb", "kill-server"], creationflags=subprocess.CREATE_NO_WINDOW)
-            subprocess.run(["adb", "start-server"], creationflags=subprocess.CREATE_NO_WINDOW)
+            try:
+                subprocess.run(
+                    ["adb", "kill-server"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+            except Exception as e:
+                logger.warning(f"adb kill-server 提示: {e}")
+            ensure_adb_server()
             logger.info("ADB 服务已重启")
+            QTimer.singleShot(0, lambda: self.tray.showMessage("ADB", "ADB 服务已完成重启", QSystemTrayIcon.Information, 2000))
         threading.Thread(target=_task, daemon=True).start()
         self.tray.showMessage("ADB", "正在重启 ADB 服务...", QSystemTrayIcon.Information, 2000)
 
     def disconnect_all(self):
         def _task():
             logger.info("执行 adb disconnect...")
-            subprocess.run(["adb", "disconnect"], creationflags=subprocess.CREATE_NO_WINDOW)
-            logger.info("所有 ADB 无线连接已断开")
+            try:
+                _, out = run_adb_command(["disconnect"], timeout=5)
+                logger.info(f"所有 ADB 无线连接已断开: {out}")
+            except Exception as e:
+                logger.warning(f"adb disconnect 异常: {e}")
         threading.Thread(target=_task, daemon=True).start()
         self.tray.showMessage("ADB", "已断开所有设备连接", QSystemTrayIcon.Information, 2000)
 
-    def on_phone_connected(self, phone_ip):
+    def on_phone_connected(self, phone_ip, adb_note=""):
         logger.info(f"收到握手信号，手机目标 IP: {phone_ip}")
         self.qr_window.set_status(f"握手成功: {phone_ip}，正在连接...", "#ffa502")
-        threading.Thread(target=self._connect_and_launch_scrcpy, args=(phone_ip,), daemon=True).start()
+        threading.Thread(target=self._connect_and_launch_scrcpy, args=(phone_ip, adb_note), daemon=True).start()
 
-    def _connect_and_launch_scrcpy(self, phone_ip):
+    def _connect_and_launch_scrcpy(self, phone_ip, adb_note=""):
         target = f"{phone_ip}:5555"
-        logger.info(f"执行 adb connect {target}...")
+        output = ""
+        connected = False
 
-        try:
-            res = subprocess.run(
-                ["adb", "connect", target],
-                capture_output=True,
-                text=True,
-                timeout=8,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            output = (res.stdout + res.stderr).strip()
-            logger.info(f"adb connect 输出结果: {output}")
-        except Exception as e:
-            output = str(e)
-            logger.error(f"adb connect 异常: {e}")
+        # 最多尝试 3 次 adb connect，兼容手机端 adbd 刚重启监听尚未就绪的瞬间
+        for attempt in range(1, 4):
+            logger.info(f"执行 adb connect {target} (第 {attempt}/3 次)...")
+            try:
+                _, output = run_adb_command(["connect", target], timeout=6)
+                logger.info(f"adb connect 输出结果: {output}")
+                if "connected to" in output.lower():
+                    connected = True
+                    break
+            except Exception as e:
+                output = f"{type(e).__name__}: {e}"
+                logger.error(f"adb connect 异常 (第 {attempt}/3 次): {output}")
 
-        if "connected to" in output.lower():
+            if attempt < 3:
+                time.sleep(0.8)
+
+        if connected:
             logger.info(f"设备 {target} 连接成功！正在隐藏二维码并唤起 scrcpy...")
             QTimer.singleShot(0, self.qr_window.hide)
-            self.tray.showMessage(
+            QTimer.singleShot(0, lambda: self.tray.showMessage(
                 "投屏已启动",
                 f"手机 {phone_ip} 已连接成功！\n按 Alt+O 可熄灭手机屏幕，耳机沉浸听音。",
                 QSystemTrayIcon.Information,
                 3000
-            )
+            ))
 
             # 定位真实的 scrcpy.exe，跳过可能拦截 GUI 窗口的 Chocolatey Shim
             real_scrcpy = find_scrcpy_executable()
@@ -690,10 +784,17 @@ class QuickCastApp:
             except Exception as e:
                 logger.error(f"scrcpy 前台拉起失败: {e}")
         else:
-            err_msg = f"连接失败: {output[:30]}"
-            logger.warning(f"无法建立 ADB 连接: {output}")
-            QTimer.singleShot(0, lambda: self.qr_window.set_status(err_msg, "#ff4757"))
-            self.tray.showMessage("连接失败", f"无法连接到 {target}：\n{output}", QSystemTrayIcon.Warning, 4000)
+            if adb_note and ("10061" in output or "refused" in output.lower() or "无法连接" in output):
+                detail = f"手机未开启5555端口({adb_note})"
+            elif "10061" in output or "无法连接" in output:
+                detail = "目标端口5555未开启，请检查手机Root权限是否已永久授权"
+            else:
+                detail = output or "连接超时，请检查局域网互通"
+
+            err_msg = f"连接失败: {detail[:34]}"
+            logger.warning(f"无法建立 ADB 连接 ({target}): {detail} | 原始输出: {output}")
+            QTimer.singleShot(0, lambda m=err_msg: self.qr_window.set_status(m, "#ff4757"))
+            QTimer.singleShot(0, lambda d=detail: self.tray.showMessage("连接失败", f"无法连接到 {target}：\n{d}", QSystemTrayIcon.Warning, 5000))
 
     def _terminate_scrcpy(self):
         if self.scrcpy_proc and self.scrcpy_proc.poll() is None:

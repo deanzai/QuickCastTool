@@ -30,6 +30,7 @@ import com.journeyapps.barcodescanner.DefaultDecoderFactory
 import com.quickcast.companion.databinding.ActivityScanBinding
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import kotlin.concurrent.thread
 
 class ScanActivity : AppCompatActivity() {
@@ -274,18 +275,21 @@ class ScanActivity : AppCompatActivity() {
             val localIp = RootHelper.getLocalIpAddress(this)
             appendLog("[2/3] 获取本机 IP: ${if (localIp.isNotEmpty()) localIp else "未知(由电脑自动识别)"}")
 
-            // 步骤 3: 构建请求目标 URL
+            // 步骤 3: 构建请求目标 URL（附加 Root 与 5555 端口自检结果）
             val targetUrlStr = if (rawUrl.startsWith("quickcast://")) {
                 "http://" + rawUrl.removePrefix("quickcast://")
             } else {
                 rawUrl
             }
 
-            val finalUrl = if (localIp.isNotEmpty()) {
-                if (targetUrlStr.contains("?")) "$targetUrlStr&ip=$localIp" else "$targetUrlStr?ip=$localIp"
-            } else {
-                targetUrlStr
+            val separator = if (targetUrlStr.contains("?")) "&" else "?"
+            val queryParts = mutableListOf<String>()
+            if (localIp.isNotEmpty()) {
+                queryParts.add("ip=${URLEncoder.encode(localIp, "UTF-8")}")
             }
+            queryParts.add("adb_ok=${if (rootOk) "1" else "0"}")
+            queryParts.add("adb_msg=${URLEncoder.encode(rootMsg, "UTF-8")}")
+            val finalUrl = "$targetUrlStr$separator${queryParts.joinToString("&")}"
 
             appendLog("[3/3] 正在向电脑发送握手请求: $finalUrl")
 
@@ -327,13 +331,19 @@ class ScanActivity : AppCompatActivity() {
             }
 
             runOnUiThread {
-                if (success) {
+                if (success && rootOk) {
                     appendLog(">>> 电脑握手成功 (HTTP $responseCode)！正在拉起投屏...")
                     binding.tvStatus.text = "投屏已拉起！"
                     Toast.makeText(this, "投屏已连接！", Toast.LENGTH_SHORT).show()
                     mainHandler.postDelayed({
                         finishAndRemoveTask()
                     }, 800)
+                } else if (success && !rootOk) {
+                    appendLog(">>> 已通知电脑，但手机端 5555 端口自检未就绪")
+                    appendLog("排查建议: 请打开 Magisk/KernelSU/APatch 确认已授予「扫码投屏伴侣」Root 权限，或手动开启开发者选项")
+                    binding.tvStatus.text = "5555 端口未开启"
+                    binding.progressBar.visibility = View.GONE
+                    binding.layoutRetry.visibility = View.VISIBLE
                 } else {
                     val failText = if (errorMsg.isNotEmpty()) errorMsg else "HTTP 错误码 $responseCode"
                     appendLog(">>> 握手失败: $failText")
